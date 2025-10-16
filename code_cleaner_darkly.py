@@ -1,193 +1,229 @@
-import math
-import os
+import ast
 import re
-import sys
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
+
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
+
+try:
+    import isort  
+    isort_api = getattr(isort, "api", isort)
+
+    def sort_code_with_isort(code: str) -> str:
+        try:
+            if hasattr(isort_api, "sort_code_string"):
+                return isort_api.sort_code_string(code)
+            if hasattr(isort_api, "sort_code"):
+                return isort_api.sort_code(code)
+            if hasattr(isort_api, "code"):
+                return isort_api.code(code)
+            if hasattr(isort, "sort_code_string"):
+                return isort.sort_code_string(code)
+            if hasattr(isort, "sort_code"):
+                return isort.sort_code(code)
+        except Exception:
+            return code
+        return code
+
+    HAS_ISORT = True
+except ImportError:
+    isort_api = None
+
+    def sort_code_with_isort(code: str) -> str:
+        return code
+    HAS_ISORT = False
 
 try:
     import autopep8
     HAS_AUTOPEP8 = True
-except Exception:
+except ImportError:
     HAS_AUTOPEP8 = False
 
 
 class CodeCleanerApp:
-    def __init__(self, root):
-        self.root = root
-        root.title("Code Cleaner")
-        root.geometry("900x700")
+    def __init__(self, app):
+        self.app = app
+        self.app.title("Python Code Cleaner - Dark Mode")
+        self.app.geometry("1000x700")
 
-        menubar = tk.Menu(root)
-        filemenu = tk.Menu(menubar, tearoff=0)
-        filemenu.add_command(label="Open...", command=self.open_file)
-        filemenu.add_command(label="Save As...", command=self.save_file)
-        filemenu.add_separator()
-        filemenu.add_command(label="Exit", command=root.quit)
-        menubar.add_cascade(label="File", menu=filemenu)
-        root.config(menu=menubar)
+        self.text_bg = "#1e1e1e"
+        self.text_fg = "#f5f5f5"
+        self.text_font = ("Consolas", 12)
 
-        top_frame = ttk.Frame(root, padding=(8, 6))
-        top_frame.pack(side=tk.TOP, fill=tk.X)
+        self.remove_comments = ttk.BooleanVar(value=True)
+        self.trim_whitespace = ttk.BooleanVar(value=True)
+        self.collapse_blank_lines = ttk.BooleanVar(value=True)
+        self.format_code = ttk.BooleanVar(value=False)
+        self.sort_imports = ttk.BooleanVar(value=False)
 
-        self.remove_comments_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(top_frame, text="Remove full-line comments (#...)",
-                        variable=self.remove_comments_var).pack(side=tk.LEFT, padx=6)
+        top_frame = ttk.Frame(self.app, padding=8)
+        top_frame.pack(side=TOP, fill=X)
 
-        self.trim_trailing_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(top_frame, text="Trim trailing whitespace",
-                        variable=self.trim_trailing_var).pack(side=tk.LEFT, padx=6)
+        ttk.Label(top_frame, text="Options:",
+                  bootstyle="inverse-secondary").pack(side=LEFT, padx=5)
 
-        self.collapse_blank_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(top_frame, text="Collapse multiple blank lines",
-                        variable=self.collapse_blank_var).pack(side=tk.LEFT, padx=6)
+        ttk.Checkbutton(top_frame, text="Remove full-line comments", variable=self.remove_comments,
+                        bootstyle="round-toggle").pack(side=LEFT, padx=5)
+        ttk.Checkbutton(top_frame, text="Trim trailing whitespace", variable=self.trim_whitespace,
+                        bootstyle="round-toggle").pack(side=LEFT, padx=5)
+        ttk.Checkbutton(top_frame, text="Collapse blank lines", variable=self.collapse_blank_lines,
+                        bootstyle="round-toggle").pack(side=LEFT, padx=5)
 
         if HAS_AUTOPEP8:
-            self.use_autopep8_var = tk.BooleanVar(value=False)
-            ttk.Checkbutton(top_frame, text="Format with autopep8 (if enabled)",
-                            variable=self.use_autopep8_var).pack(side=tk.LEFT, padx=6)
+            ttk.Checkbutton(top_frame, text="Format with autopep8", variable=self.format_code,
+                            bootstyle="round-toggle").pack(side=LEFT, padx=5)
         else:
-            ttk.Label(top_frame, text="(autopep8 not installed)").pack(
-                side=tk.LEFT, padx=6)
+            ttk.Label(top_frame, text="(autopep8 not installed)",
+                      foreground="#ff8080").pack(side=LEFT, padx=10)
 
-        ttk.Button(top_frame, text="Clean Code ▶",
-                   command=self.clean_code).pack(side=tk.RIGHT, padx=6)
-        ttk.Button(top_frame, text="Swap Input/Output",
-                   command=self.swap_io).pack(side=tk.RIGHT, padx=6)
+        if HAS_ISORT:
+            ttk.Checkbutton(top_frame, text="Sort imports (isort)", variable=self.sort_imports,
+                            bootstyle="round-toggle").pack(side=LEFT, padx=5)
 
-        paned = ttk.Panedwindow(root, orient=tk.VERTICAL)
-        paned.pack(fill=tk.BOTH, expand=True)
+        ttk.Button(top_frame, text="Clean Code ▶", command=self.clean_code,
+                   bootstyle="success-outline").pack(side=LEFT, padx=10)
+        ttk.Button(top_frame, text="Swap Input/Output", command=self.swap_text,
+                   bootstyle="info-outline").pack(side=LEFT, padx=5)
+        ttk.Button(top_frame, text="Validate Syntax", command=self.validate_syntax,
+                   bootstyle="warning-outline").pack(side=LEFT, padx=5)
+        ttk.Button(top_frame, text="Copy Output", command=self.copy_output,
+                   bootstyle="secondary-outline").pack(side=LEFT, padx=5)
 
-        input_frame = ttk.Labelframe(paned, text="Input Code", padding=(6, 6))
-        self.input_text = tk.Text(input_frame, wrap="none", undo=True)
-        self._add_scrollbars(input_frame, self.input_text)
-        input_frame.pack(fill=tk.BOTH, expand=True)
-        paned.add(input_frame, weight=1)
+        pw = ttk.PanedWindow(self.app, orient="vertical")
+        pw.pack(fill=BOTH, expand=TRUE, padx=10, pady=5)
+
+        input_frame = ttk.Labelframe(pw, text="Input Code", bootstyle="dark")
+        self.input_text = ttk.Text(input_frame, wrap="none", undo=True, font=self.text_font,
+                                   background=self.text_bg, foreground=self.text_fg,
+                                   insertbackground="white", height=15)
+        self.input_text.pack(fill=BOTH, expand=TRUE)
+        pw.add(input_frame)
 
         output_frame = ttk.Labelframe(
-            paned, text="Cleaned Output", padding=(6, 6))
-        self.output_text = tk.Text(
-            output_frame, wrap="none", undo=True, state=tk.NORMAL)
-        self._add_scrollbars(output_frame, self.output_text)
-        output_frame.pack(fill=tk.BOTH, expand=True)
-        paned.add(output_frame, weight=1)
+            pw, text="Cleaned Output", bootstyle="dark")
+        self.output_text = ttk.Text(output_frame, wrap="none", undo=True, font=self.text_font,
+                                    background=self.text_bg, foreground=self.text_fg,
+                                    insertbackground="white", height=15)
+        self.output_text.pack(fill=BOTH, expand=TRUE)
+        pw.add(output_frame)
 
-        self.status = tk.StringVar(value="Ready")
-        statusbar = ttk.Label(root, textvariable=self.status,
-                              relief=tk.SUNKEN, anchor=tk.W)
-        statusbar.pack(side=tk.BOTTOM, fill=tk.X)
+        menubar = ttk.Menu(self.app, background="#2b2b2b",
+                           foreground="#f5f5f5", activebackground="#3b3b3b")
+        file_menu = ttk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Open File", command=self.open_file)
+        file_menu.add_command(label="Save Cleaned Output",
+                              command=self.save_output)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.app.quit)
+        menubar.add_cascade(label="File", menu=file_menu)
+        self.app.config(menu=menubar)
 
-    def _add_scrollbars(self, parent, text_widget):
-        vscroll = ttk.Scrollbar(
-            parent, orient=tk.VERTICAL, command=text_widget.yview)
-        hscroll = ttk.Scrollbar(
-            parent, orient=tk.HORIZONTAL, command=text_widget.xview)
-        text_widget.configure(yscrollcommand=vscroll.set,
-                              xscrollcommand=hscroll.set)
-        text_widget.grid(row=0, column=0, sticky="nsew")
-        vscroll.grid(row=0, column=1, sticky="ns")
-        hscroll.grid(row=1, column=0, sticky="ew")
-        parent.rowconfigure(0, weight=1)
-        parent.columnconfigure(0, weight=1)
+        self.status = ttk.Label(self.app, text="Ready",
+                                anchor=W, bootstyle="inverse-dark")
+        self.status.pack(side=BOTTOM, fill=X)
 
-    def open_file(self):
-        path = filedialog.askopenfilename(
-            filetypes=[("Python files", "*.py"), ("All files", "*.*")])
-        if not path:
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = f.read()
-            self.input_text.delete("1.0", tk.END)
-            self.input_text.insert(tk.END, data)
-            self.status.set(f"Opened: {path}")
-        except Exception as e:
-            messagebox.showerror("Error", f"Could not open file:\n{e}")
-
-    def save_file(self):
-        path = filedialog.asksaveasfilename(defaultextension=".py", filetypes=[
-                                            ("Python files", "*.py"), ("All files", "*.*")])
-        if not path:
-            return
-        try:
-            data = self.output_text.get("1.0", tk.END)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(data)
-            self.status.set(f"Saved: {path}")
-        except Exception as e:
-            messagebox.showerror("Error", f"Could not save file:\n{e}")
-
-    def swap_io(self):
-        in_txt = self.input_text.get("1.0", tk.END)
-        out_txt = self.output_text.get("1.0", tk.END)
-        self.input_text.delete("1.0", tk.END)
-        self.input_text.insert(tk.END, out_txt)
-        self.output_text.delete("1.0", tk.END)
-        self.output_text.insert(tk.END, in_txt)
-        self.status.set("Swapped input and output")
+        self.app.bind("<Control-o>", lambda e: self.open_file())
+        self.app.bind("<Control-s>", lambda e: self.save_output())
+        self.app.bind("<Control-e>", lambda e: self.clean_code())
 
     def clean_code(self):
-        raw = self.input_text.get("1.0", tk.END)
-        self.status.set("Cleaning...")
-        self.root.update_idletasks()
+        code = self.input_text.get("1.0", "end-1c")
+        original_lines = code.splitlines()
+        lines = original_lines.copy()
+        cleaned = []
 
-        cleaned = raw.splitlines()
+        if self.trim_whitespace.get():
+            lines = [line.rstrip() for line in lines]
 
-        if self.trim_trailing_var.get():
-            cleaned = [line.rstrip() for line in cleaned]
+        comments_before = sum(1 for l in lines if re.match(r'^\s*#', l))
+        if self.remove_comments.get():
+            lines = [line for line in lines if not re.match(r'^\s*#', line)]
 
-        if self.remove_comments_var.get():
-            new_lines = []
-            for line in cleaned:
-                if re.match(r'^\s*#', line):
-                    continue
-                new_lines.append(line)
-            cleaned = new_lines
-
-        if self.collapse_blank_var.get():
-            new_lines = []
+        if self.collapse_blank_lines.get():
             blank_count = 0
-            for line in cleaned:
+            new_lines = []
+            for line in lines:
                 if line.strip() == "":
                     blank_count += 1
                 else:
                     blank_count = 0
                 if blank_count <= 1:
                     new_lines.append(line)
-            cleaned = new_lines
+            lines = new_lines
 
-        result = "\n".join(cleaned).rstrip() + "\n"
+        cleaned = "\n".join(lines)
 
-        if HAS_AUTOPEP8 and getattr(self, "use_autopep8_var", None) and self.use_autopep8_var.get():
+        if HAS_AUTOPEP8 and self.format_code.get():
+            cleaned = autopep8.fix_code(cleaned)
+
+        if HAS_ISORT and self.sort_imports.get():
             try:
-                result = autopep8.fix_code(result)
-                self.status.set("Cleaned + formatted with autopep8")
-            except Exception as e:
-                self.status.set("Cleaned (autopep8 failed)")
-        else:
-            self.status.set("Cleaned")
+                cleaned = sort_code_with_isort(cleaned)
+            except Exception:
+                pass
 
-        self.output_text.delete("1.0", tk.END)
-        self.output_text.insert(tk.END, result)
+        self.output_text.delete("1.0", "end")
+        self.output_text.insert("1.0", cleaned)
 
+        cleaned_lines = cleaned.splitlines()
+        removed_comments = comments_before - \
+            sum(1 for l in cleaned_lines if re.match(r'^\s*#', l))
+        stats = f"Lines: {len(original_lines)} → {len(cleaned_lines)} | Comments removed: {max(0, removed_comments)}"
+        self.status.config(text=f"Code cleaned successfully  — {stats}")
 
-def main():
-    root = tk.Tk()
-    app = CodeCleanerApp(root)
-    root.mainloop()
+    def swap_text(self):
+        input_content = self.input_text.get("1.0", "end-1c")
+        output_content = self.output_text.get("1.0", "end-1c")
+        self.input_text.delete("1.0", "end")
+        self.output_text.delete("1.0", "end")
+        self.input_text.insert("1.0", output_content)
+        self.output_text.insert("1.0", input_content)
+        self.status.config(text="Input and Output swapped ")
+
+    def open_file(self):
+        path = filedialog.askopenfilename(
+            filetypes=[("Python Files", "*.py"), ("All Files", "*.*")])
+        if path:
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read()
+            self.input_text.delete("1.0", "end")
+            self.input_text.insert("1.0", content)
+            self.status.config(text=f"Opened file: {path}")
+
+    def save_output(self):
+        path = filedialog.asksaveasfilename(defaultextension=".py",
+                                            filetypes=[("Python Files", "*.py"), ("All Files", "*.*")])
+        if path:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.output_text.get("1.0", "end-1c"))
+            self.status.config(text=f"Output saved to: {path}")
+            messagebox.showinfo("Saved", f"Output saved to:\n{path}")
+
+    def copy_output(self):
+        out = self.output_text.get("1.0", "end-1c")
+        if out:
+            try:
+                self.app.clipboard_clear()
+                self.app.clipboard_append(out)
+                self.status.config(text="Output copied to clipboard 📋")
+            except Exception:
+                self.status.config(text="Failed to copy to clipboard")
+
+    def validate_syntax(self):
+        code = self.output_text.get(
+            "1.0", "end-1c") or self.input_text.get("1.0", "end-1c")
+        try:
+            ast.parse(code)
+            messagebox.showinfo("Syntax Check", "No syntax errors found ")
+            self.status.config(text="Syntax valid ")
+        except SyntaxError as e:
+            messagebox.showerror(
+                "Syntax Error", f"SyntaxError: {e.msg}\nLine: {e.lineno}, Offset: {e.offset}")
+            self.status.config(text=f"Syntax error at line {e.lineno} ")
 
 
 if __name__ == "__main__":
-    main()
-
-
-def hello():
-    print("Hello, world!")  # yazıyı ekrana basar
-
-
-def calculate():
-    x = 5
-    y = 10
-    z = math.sqrt(x**2 + y**2)
-    return z
+    app = ttk.Window(themename="darkly")
+    CodeCleanerApp(app)
+    app.mainloop()
 
