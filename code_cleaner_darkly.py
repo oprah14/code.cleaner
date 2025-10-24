@@ -4,6 +4,33 @@ from tkinter import filedialog, messagebox
 
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
+import requests  # en üste ekle
+
+def send_to_backend(self):
+    cleaned_code = self.output_text.get("1.0", "end-1c")
+    if not cleaned_code.strip():
+        messagebox.showwarning("Warning", "No cleaned code to send!")
+        return
+
+    try:
+        response = requests.post(
+            "http://127.0.0.1:8000/upload_code/",
+            json={"cleaned_code": cleaned_code},
+            timeout=5
+        )
+
+        if response.status_code == 200:
+            res = response.json()
+            messagebox.showinfo("Success", f"✅ {res['message']}")
+            self.status.config(text="Cleaned code sent to backend ✅")
+        else:
+            messagebox.showerror("Error", f"Backend error: {response.text}")
+            self.status.config(text="Backend returned an error ❌")
+
+    except Exception as e:
+        messagebox.showerror("Connection Error", str(e))
+        self.status.config(text="Failed to send to backend ❌")
+
 
 try:
     import isort  
