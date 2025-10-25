@@ -1,10 +1,12 @@
+# Standard library imports
 import ast
 import re
 from tkinter import filedialog, messagebox
 
+# Third party imports
+import requests
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
-import requests  # en üste ekle
 
 def send_to_backend(self):
     cleaned_code = self.output_text.get("1.0", "end-1c")
@@ -64,11 +66,14 @@ try:
     import autopep8
     HAS_AUTOPEP8 = True
 except ImportError:
+    autopep8 = None
     HAS_AUTOPEP8 = False
+    print("Warning: autopep8 not installed. Code formatting will be disabled.")
 
 
 class CodeCleanerApp:
-    def __init__(self, app):
+    def __init__(self, app, backend_url="http://127.0.0.1:8000"):
+        self.backend_url = backend_url
         self.app = app
         self.app.title("Python Code Cleaner - Dark Mode")
         self.app.geometry("1000x700")
@@ -115,6 +120,9 @@ class CodeCleanerApp:
                    bootstyle="warning-outline").pack(side=LEFT, padx=5)
         ttk.Button(top_frame, text="Copy Output", command=self.copy_output,
                    bootstyle="secondary-outline").pack(side=LEFT, padx=5)
+        ttk.Button(top_frame, text="Send to Backend", 
+                   command=self.send_to_backend,
+                   bootstyle="primary-outline").pack(side=LEFT, padx=5)
 
         pw = ttk.PanedWindow(self.app, orient="vertical")
         pw.pack(fill=BOTH, expand=TRUE, padx=10, pady=5)
@@ -253,4 +261,3 @@ if __name__ == "__main__":
     app = ttk.Window(themename="darkly")
     CodeCleanerApp(app)
     app.mainloop()
-
